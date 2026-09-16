@@ -1,0 +1,16 @@
+[project]
+name = "kkik-parse"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "jupyter>=1.1.1",
+    "quarto>=0.1.0",
+    "scanpy>=1.12.4",
+    "typing-extensions>=4.16.0",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.3.0",
+    "jupyter>=1.1.1",
+]

@@ -1,0 +1,19 @@
+---
+title: "Read data and QC"
+author: "Martín Suárez Álvarez"
+format: 
+    html:
+        embed-resources: true
+jupyter: kkik_parse
+---
+
+# Pre
+
+::: {.callout-note}
+The `uv` python interpreter lives in `~/minstallation/.venvs/KKIK_parse/bin/python`
+:::
+
+```{python}
+import scanpy as sc
+import pandas as pd
+```
