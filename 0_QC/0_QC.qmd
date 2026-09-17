@@ -4,6 +4,7 @@ author: "Martín Suárez Álvarez"
 format: 
     html:
         embed-resources: true
+        code-fold: true
 jupyter: kkik_parse
 ---
 
@@ -13,7 +14,195 @@ jupyter: kkik_parse
 The `uv` python interpreter lives in `~/minstallation/.venvs/KKIK_parse/bin/python`
 :::
 
+Positron's kernel supervisor prepends its own bundled ipykernel/debugger support dir to sys.path, which ships a stale typing_extensions lacking `sentinel` (needed by anndata). This reshadows it behind the venv's site-packages so the venv's newer typing_extensions wins. See posit-dev/positron#15574.
+
+```{python}
+import sys
+sys.path = [p for p in sys.path if "positron-server" not in p] + \
+           [p for p in sys.path if "positron-server" in p]
+```
+
+
 ```{python}
 import scanpy as sc
 import pandas as pd
+import os
+import anndata as ad
+import session_info
+import plotnine as gg
+import seaborn as sns
+import matplotlib.pyplot as plt
+import numpy as np
+import plotnine.options as pnopt
+```
+
+Figure settings:
+
+```{python}
+plt.rcParams["font.sans-serif"] = "Nimbus sans"
+```
+
+# Create object per sample
+
+Steps: 
+- Find folders where sample data is stored (starts with `KS` and it's a folder).
+- For each folder, store the path for the `count_matrix.mtx`, `cell_metadata.csv` and `all_genes.csv`. 
+- Create an anndata object with the counts, cell metadata and gene metadata.
+- Store it in a dictionary (`adatas`). 
+
+```{python}
+
+data_folder = "data/"
+sample_folders = [
+    folder
+    for folder in os.listdir("data/")
+    if (folder.startswith("KS") and os.path.isdir(os.path.join(data_folder, folder)))
+]
+
+
+adatas = {}
+for folder in sample_folders:
+    paths = {
+        "count_matrix": os.path.join(
+            data_folder, folder, "DGE_unfiltered", "count_matrix.mtx"
+        ),
+        "cell_metadata": os.path.join(
+            data_folder, folder, "DGE_unfiltered", "cell_metadata.csv"
+        ),
+        "genes": os.path.join(data_folder, folder, "DGE_unfiltered", "all_genes.csv"),
+    }
+
+    adata = sc.read_mtx(paths["count_matrix"])
+    cell_meta = pd.read_csv(paths["cell_metadata"])
+    gene_data = pd.read_csv(paths["genes"])
+
+    adata.var_names = gene_data["gene_name"]
+    adata.obs = cell_meta
+    adata.obs_names = adata.obs["sample"] + "_" + adata.obs["bc_wells"]
+
+    # make var_names unique
+
+    adata.var_names_make_unique()
+    adatas[folder] = adata
+```
+
+
+# Apply QC
+
+## Check number of cells per sample 
+
+```{python}
+# create dict with number of cells per sample, convert to dataframe
+n_obs_dict = {i: adatas[i].n_obs for i in adatas.keys()}
+
+# convert to df
+n_obs_df = pd.DataFrame(n_obs_dict.items(), columns=["sample", "n_obs"])
+```
+
+
+```{python}
+#| fig-width: 5
+#| fig-height: 5
+(
+    gg.ggplot(n_obs_df, gg.aes(x="sample", y="n_obs"))
+    + gg.geom_col()
+    + gg.theme_minimal()
+    + gg.theme(axis_text_x=gg.element_text(angle=45, hjust=1, vjust=1))
+)
+```
+
+## Compute QC metrics
+
+Compute percentage of mitochondrial reads, percentage of ribosomal reads, percentage of hemoglobin reads, and plot QC metrics as violin plots and as scatter plots.
+
+```{python}
+for adata in adatas.values():
+    # mitochondrial genes
+    adata.var["mt"] = adata.var_names.str.startswith("MT-")
+    # ribosomal genes
+    adata.var["ribo"] = adata.var_names.str.startswith(("RPS", "RPL"))
+    # hemoglobin genes.
+    adata.var["hb"] = adata.var_names.str.contains(r"^HB[ABDEGMQZ]\d*(?!\w)")
+
+    sc.pp.calculate_qc_metrics(
+        adata, qc_vars=["mt", "ribo", "hb"], inplace=True, percent_top=[20], log1p=True
+    )
+```
+
+```{python}
+joint_obs = pd.concat([adata.obs for adata in adatas.values()])
+joint_obs = joint_obs[
+    [
+        "sample",
+        "pct_counts_mt",
+        "pct_counts_ribo",
+        "pct_counts_hb",
+        "total_counts",
+        "log1p_total_counts",
+        "n_genes_by_counts",
+        "log1p_n_genes_by_counts",
+    ]
+]
+
+joint_obs = joint_obs.melt(id_vars="sample", var_name="metric", value_name="value")
+
+joint_obs_summary = joint_obs.groupby(["sample","metric"]).median()
+```
+
+Plot median values:
+
+```{python}
+#| fig-width: 7
+#| fig-height: 10
+(
+    gg.ggplot(joint_obs_summary.reset_index(), gg.aes(x="sample", y="value"))
+    + gg.geom_col()
+    + gg.facet_grid("metric", scales="free_y")
+    + gg.theme_minimal()
+    + gg.theme(
+        axis_text_x=gg.element_text(angle=45, hjust=1, vjust=1),
+        legend_position="none",
+        text=gg.element_text(family="Nimbus sans"),
+        figure_size=(7, 10),
+    )
+```
+
+```{python}
+
+metrics = [
+    "pct_counts_mt",
+    "pct_counts_ribo",
+    "pct_counts_hb",
+    "total_counts",
+    "log1p_total_counts",
+    "n_genes_by_counts",
+    "log1p_n_genes_by_counts",
+]
+
+adata_concat = ad.concat(adatas.values())
+fig, axes = plt.subplots(3, 3, figsize=(9, 9))
+axes = axes.flatten()
+
+for ax, metric in zip(axes, metrics):
+    sc.pl.violin(
+        adata_concat,
+        keys=metric,
+        groupby="sample",
+        rotation=90,
+        stripplot=False,
+        ax=ax,
+        show=False,
+    )
+
+for ax in axes[len(metrics) :]:
+    ax.axis("off")  # hide the unused 8th panel (7 metrics, 8 slots)
+
+plt.tight_layout()
+plt.show()
+```
+
+# Session info 
+
+```{python}
+session_info.show(std_lib=True,dependencies=True)
 ```
