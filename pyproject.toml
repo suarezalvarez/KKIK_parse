@@ -3,6 +3,7 @@ name = "kkik-parse"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    "glasbey>=0.3.0",
     "jupyter>=1.1.1",
     "plotnine>=0.15.3",
     "quarto>=0.1.0",

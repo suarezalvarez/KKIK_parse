@@ -33,7 +33,9 @@ import plotnine as gg
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
-import plotnine.options as pnopt
+import glasbey
+from IPython.display import display
+from utils import is_outlier, is_outlier_mt
 ```
 
 Figure settings:
@@ -64,12 +66,12 @@ adatas = {}
 for folder in sample_folders:
     paths = {
         "count_matrix": os.path.join(
-            data_folder, folder, "DGE_unfiltered", "count_matrix.mtx"
+            data_folder, folder, "DGE_filtered", "count_matrix.mtx"
         ),
         "cell_metadata": os.path.join(
-            data_folder, folder, "DGE_unfiltered", "cell_metadata.csv"
+            data_folder, folder, "DGE_filtered", "cell_metadata.csv"
         ),
-        "genes": os.path.join(data_folder, folder, "DGE_unfiltered", "all_genes.csv"),
+        "genes": os.path.join(data_folder, folder, "DGE_filtered", "all_genes.csv"),
     }
 
     adata = sc.read_mtx(paths["count_matrix"])
@@ -87,7 +89,7 @@ for folder in sample_folders:
 ```
 
 
-# Apply QC
+# Compute QC
 
 ## Check number of cells per sample 
 
@@ -101,13 +103,13 @@ n_obs_df = pd.DataFrame(n_obs_dict.items(), columns=["sample", "n_obs"])
 
 
 ```{python}
-#| fig-width: 5
-#| fig-height: 5
 (
     gg.ggplot(n_obs_df, gg.aes(x="sample", y="n_obs"))
     + gg.geom_col()
     + gg.theme_minimal()
-    + gg.theme(axis_text_x=gg.element_text(angle=45, hjust=1, vjust=1))
+    + gg.theme(
+        axis_text_x=gg.element_text(angle=45, hjust=1, vjust=1), figure_size=(6.4, 4.8)
+    )
 )
 ```
 
@@ -152,20 +154,26 @@ joint_obs_summary = joint_obs.groupby(["sample","metric"]).median()
 Plot median values:
 
 ```{python}
-#| fig-width: 7
-#| fig-height: 10
+cols = glasbey.extend_palette(palette="Set2", palette_size=len(sample_folders))
+
 (
-    gg.ggplot(joint_obs_summary.reset_index(), gg.aes(x="sample", y="value"))
+    gg.ggplot(
+        joint_obs_summary.reset_index(), gg.aes(x="sample", y="value", fill="sample")
+    )
     + gg.geom_col()
     + gg.facet_grid("metric", scales="free_y")
     + gg.theme_minimal()
+    + gg.scale_fill_manual(values=cols)
     + gg.theme(
         axis_text_x=gg.element_text(angle=45, hjust=1, vjust=1),
         legend_position="none",
         text=gg.element_text(family="Nimbus sans"),
-        figure_size=(7, 10),
+        figure_size=(6.4, 10),
     )
+)
 ```
+
+Violin plots per sample:
 
 ```{python}
 
@@ -180,7 +188,7 @@ metrics = [
 ]
 
 adata_concat = ad.concat(adatas.values())
-fig, axes = plt.subplots(3, 3, figsize=(9, 9))
+fig, axes = plt.subplots(7, 1, figsize=(9, 18))
 axes = axes.flatten()
 
 for ax, metric in zip(axes, metrics):
@@ -191,14 +199,153 @@ for ax, metric in zip(axes, metrics):
         rotation=90,
         stripplot=False,
         ax=ax,
+        dodge=False,
         show=False,
     )
-
-for ax in axes[len(metrics) :]:
-    ax.axis("off")  # hide the unused 8th panel (7 metrics, 8 slots)
+    median_val = adata_concat.obs[metric].median()
+    ax.axhline(median_val, color="red", linestyle="--", linewidth=1)
+    ax.set_title(f"Median value: {median_val:.2f}")
 
 plt.tight_layout()
 plt.show()
+```
+
+Scatterplot per sample (colored by `pct_count_mt`), one tab per sample.
+
+```{python}
+#| output: asis
+print(":::: {.panel-tabset}")
+for folder in sample_folders:
+    print(f"## {folder}")
+    fig, ax = plt.subplots(figsize=(6, 5))
+    sc.pl.scatter(
+        adatas[folder],
+        "total_counts",
+        "n_genes_by_counts",
+        color="pct_counts_mt",
+        ax=ax,
+        show=False,
+    )
+    ax.set_title(folder)
+    plt.show()
+    print("")
+print("::::")
+```
+
+# Define outliers for visualization
+
+Visualization of outliers and cells that would be removed with different thresholds. 
+
+## Outliers of `log1p_total_counts` and `log1p_n_genes_by_counts`
+
+```{python}
+mads = [3, 4, 5]
+for mad in mads:
+    for adata in adatas.values():
+        adata.obs[f"outlier_{mad}"] = is_outlier(
+            adata, "log1p_total_counts", mad
+        ) | is_outlier(adata, "log1p_n_genes_by_counts", mad)
+```
+
+
+```{python}
+#| output: asis
+joint_obs = pd.concat([adata.obs for adata in adatas.values()])
+print(":::: {.panel-tabset}")
+for mad in mads:
+    print(f"\n## {mad}\n")
+    display(
+        (
+            gg.ggplot(joint_obs, gg.aes(x="sample", fill=f"outlier_{mad}"))
+            + gg.geom_bar(position="fill")
+            + gg.labs(y="Proportion")
+            + gg.theme_minimal()
+            + gg.theme(
+                text=gg.element_text(family="Nimbus sans"),
+                axis_text_x=gg.element_text(angle=45, hjust=1, vjust=1),
+            )
+            + gg.scale_fill_manual(values=["cornflowerblue", "pink"])
+        )
+    )
+print("\n::::")
+```
+
+## Outliers based on mitochondrial percentage
+
+```{python}
+for mad in mads:
+    for adata in adatas.values():
+        adata.obs[f"mt_outlier_{mad}"] = is_outlier_mt(adata, "pct_counts_mt", mad)
+```
+
+```{python}
+#| output: asis
+joint_obs = pd.concat([adata.obs for adata in adatas.values()])
+print(":::: {.panel-tabset}")
+for mad in mads:
+    print(f"\n## {mad}\n")
+    display(
+        (
+            gg.ggplot(joint_obs, gg.aes(x="sample", fill=f"mt_outlier_{mad}"))
+            + gg.geom_bar(position="fill")
+            + gg.labs(y="Proportion")
+            + gg.theme_minimal()
+            + gg.theme(
+                text=gg.element_text(family="Nimbus sans"),
+                axis_text_x=gg.element_text(angle=45, hjust=1, vjust=1),
+            )
+            + gg.scale_fill_manual(values=["cornflowerblue", "pink"])
+        )
+    )
+print("\n::::")
+```
+
+
+## Joint
+
+```{python}
+nmad_thr = 5
+nmad_mt_thr = 5
+```
+
+Using `{python} nmad_thr` nmads for counts and features thresholds and `{python} nmad_mt_thr` for mitochondrial. This is the most permissive option, and this will be explored in latter steps of the pipeline.
+
+```{python}
+for adata in adatas.values():
+    adata.obs["keep"] = (~adata.obs[f"outlier_{nmad_thr}"]) & (
+        ~adata.obs[f"mt_outlier_{nmad_mt_thr}"]
+    )
+```
+
+```{python}
+joint_obs = pd.concat([adata.obs for adata in adatas.values()])
+
+(
+    gg.ggplot(joint_obs, gg.aes(x="sample", fill="keep"))
+    + gg.geom_bar(position="fill")
+    + gg.labs(y="Proportion")
+    + gg.theme_minimal()
+    + gg.theme(
+        text=gg.element_text(family="Nimbus sans"),
+        axis_text_x=gg.element_text(angle=45, hjust=1, vjust=1),
+    )
+    + gg.scale_fill_manual(values=["pink", "cornflowerblue"])
+)
+```
+
+# Apply QC
+
+Keep only cells flagged as `keep` and save filtered data.
+
+```{python}
+for key in adatas.keys():
+    adatas[key] = adata[adata.obs.keep].copy()
+
+adata = ad.concat(adatas.values())
+
+resdir = "0_QC/outputs/files/"
+os.makedirs(resdir, exist_ok=True)
+sc.write("0_QC/outputs/files/sc.h5ad", adata)
 ```
 
 # Session info 
