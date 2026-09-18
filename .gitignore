@@ -51,6 +51,10 @@ rsconnect/
 # html files in general
 **/*.html
 
-# data 
+# data
 
 data/*
+
+# Quarto scratch/cache directory
+/.quarto/
+**/*.quarto_ipynb
