@@ -50,7 +50,7 @@ rsconnect/
 
 # html files in general
 **/*.html
-
+s
 # data
 
 data/*
@@ -58,3 +58,7 @@ data/*
 # Quarto scratch/cache directory
 /.quarto/
 **/*.quarto_ipynb
+
+# outputs
+**/outputs/*
+!**/outputs/*/.gitkeep
