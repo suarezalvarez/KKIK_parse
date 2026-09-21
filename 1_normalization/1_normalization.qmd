@@ -1,0 +1,167 @@
+---
+title: "Normalization"
+author: "Martín Suárez Álvarez"
+date: today
+format: 
+    html:
+        embed-resources: true
+        code-fold: true
+        theme: minty
+        toc: true
+jupyter: kkik_parse
+---
+
+# Pre
+
+::: {.callout-note}
+The `uv` python interpreter lives in `~/minstallation/.venvs/KKIK_parse/bin/python`
+:::
+
+```{python}
+import scanpy as sc
+import pandas as pd
+import os
+import matplotlib.pyplot as plt
+import session_info
+```
+
+Figure settings:
+
+```{python}
+plt.rcParams["font.sans-serif"] = "Nimbus sans"
+```
+
+Random settings:
+
+```{python}
+random_state = 275
+```
+
+Create folders for outputs:
+
+```{python}
+resdir = "1_normalization/outputs/files"
+os.makedirs(resdir,exist_ok=True)
+```
+
+Read object from previous step:
+
+```{python}
+adata = sc.read_h5ad("0_QC/outputs/files/sc.h5ad")
+```
+
+
+# Normalization
+
+Save counts in layer counts:
+```{python}
+adata.layers["counts"] = adata.X
+```
+
+Log normalize with median as scaling factor (default) and save in layer.
+
+```{python}
+sc.pp.normalize_total(adata,target_sum=None)
+sc.pp.log1p(adata)
+adata.layers["lognorm"] = adata.X
+```
+
+# Highly variable genes
+
+Selection using `seurat` method with `sample` as batch.
+```{python}
+sc.pp.highly_variable_genes(adata, layer="lognorm", batch_key="sample")
+sc.pl.highly_variable_genes(adata, show=True)
+```
+
+# Dimensional reduction
+
+## PCA
+
+
+```{python}
+sc.pp.pca(adata,mask_var="highly_variable",)
+```
+
+### Plot cells in PCA space
+
+
+```{python}
+sc.pl.pca(
+    adata,
+    color=["sample"],
+    cmap="magma",
+)
+sc.pl.pca(
+    adata,
+    color=["log1p_total_counts", "log1p_n_genes_by_counts"],
+    cmap="magma",
+)
+
+
+sc.pl.pca_loadings(adata)
+```
+
+## UMAP
+
+```{python}
+sc.pp.neighbors(adata)
+sc.tl.umap(adata,random_state=random_state)
+```
+
+### Plot cells in UMAP space
+
+#### QC
+```{python}
+sc.pl.umap(adata,color="sample")
+sc.pl.umap(
+    adata,
+    color=["log1p_total_counts", "log1p_n_genes_by_counts"],
+    cmap="magma",
+)
+```
+
+#### Specific genes
+
+```{python}
+gois = [
+    "IGHA1",
+    "IGHA2",
+    "IGHG1",
+    "IGHG2",
+    "IGHG3",
+    "IGHG4",
+    "JCHAIN",
+    "MZB1",
+    "DERL3",
+    "EPCAM",
+    "COL3A1",
+    "TAGLN",
+    "DCN",
+    "DES",
+    "CD3D",
+    "CD3E",
+    "PTPRC",
+    "GZMA",
+    "GZMB",
+]
+sc.pl.umap(
+    adata,
+    color=gois,
+    cmap="magma",
+)
+fig = plt.gcf()
+fig.set_size_inches(29, 24)
+```
+
+# Save 
+
+```{python}
+sc.write(f"{resdir}/sc.h5ad", adata=adata, ext="h5ad")
+```
+
+# Session info
+
+```{python}
+session_info.show(std_lib=True,dependencies=True)
+```

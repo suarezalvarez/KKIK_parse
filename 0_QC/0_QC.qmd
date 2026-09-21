@@ -1,10 +1,13 @@
 ---
 title: "Read data and QC"
 author: "Martín Suárez Álvarez"
+date: today
 format: 
     html:
         embed-resources: true
         code-fold: true
+        theme: minty
+        toc: true
 jupyter: kkik_parse
 ---
 
@@ -18,8 +21,10 @@ Positron's kernel supervisor prepends its own bundled ipykernel/debugger support
 
 ```{python}
 import sys
-sys.path = [p for p in sys.path if "positron-server" not in p] + \
-           [p for p in sys.path if "positron-server" in p]
+
+sys.path = [p for p in sys.path if "positron-server" not in p] + [
+    p for p in sys.path if "positron-server" in p
+]
 ```
 
 
@@ -36,6 +41,7 @@ import numpy as np
 import glasbey
 from IPython.display import display
 from utils import is_outlier, is_outlier_mt
+import re
 ```
 
 Figure settings:
@@ -47,10 +53,11 @@ plt.rcParams["font.sans-serif"] = "Nimbus sans"
 # Create object per sample
 
 Steps: 
-- Find folders where sample data is stored (starts with `KS` and it's a folder).
-- For each folder, store the path for the `count_matrix.mtx`, `cell_metadata.csv` and `all_genes.csv`. 
-- Create an anndata object with the counts, cell metadata and gene metadata.
-- Store it in a dictionary (`adatas`). 
+
+1. Find folders where sample data is stored (starts with `KS` and it's a folder).
+2. For each folder, store the path for the `count_matrix.mtx`, `cell_metadata.csv` and `all_genes.csv`. 
+3. Create an anndata object with the counts, cell metadata and gene metadata.
+4. Store it in a dictionary (`adatas`). 
 
 ```{python}
 
@@ -86,6 +93,51 @@ for folder in sample_folders:
 
     adata.var_names_make_unique()
     adatas[folder] = adata
+```
+
+# Add metadata
+
+Read metadata excel file and clean
+
+```{python}
+md = pd.read_excel("metadata/KKIK_metadata_ParsescRNAseq.xlsx", header=1)
+
+# remove last row
+md = md.iloc[:-1, :]
+md = md.drop("Vial ID", axis=1)
+
+# convert date to string (anndata cannot save dates)
+
+md["Date of collection"] = md["Date of collection"].astype(str)
+
+
+# complete NaNs
+
+md["Patient ID"] = md["Patient ID"].replace("NaN", np.nan).ffill()
+md["Patient outcome"] = md["Patient outcome"].ffill()
+md["Timepoint"] = md["Timepoint"].ffill()
+md["Sample ID"] = md["Sample ID"].ffill()
+
+
+# clean values
+def clean(varStr):
+    return re.sub(r"\W|^(?=\d)", "_", varStr)
+
+
+for i, name in enumerate(md.columns):
+    name = name.strip()
+    name = clean(name)
+    name = name.lower()
+    md = md.rename(columns={md.columns[i]: name})
+```
+
+Add metadata to adata objects:
+
+```{python}
+for name, adata in adatas.items():
+    meta = md.loc[md["sample_id"] == name].iloc[0]
+    for col in meta.index.difference(["sample_id"]):
+        adata.obs[col] = meta[col]
 ```
 
 
@@ -188,7 +240,7 @@ metrics = [
 ]
 
 adata_concat = ad.concat(adatas.values())
-fig, axes = plt.subplots(7, 1, figsize=(9, 18))
+fig, axes = plt.subplots(len(metrics), 1, figsize=(9, 18))
 axes = axes.flatten()
 
 for ax, metric in zip(axes, metrics):
@@ -333,19 +385,69 @@ joint_obs = pd.concat([adata.obs for adata in adatas.values()])
 )
 ```
 
-# Apply QC
+# Apply cell QC
 
 Keep only cells flagged as `keep` and save filtered data.
 
 ```{python}
 for key in adatas.keys():
-    adatas[key] = adata[adata.obs.keep].copy()
+    adatas[key] = adatas[key][adatas[key].obs.keep].copy()
 
 adata = ad.concat(adatas.values())
+```
 
+# Filter genes
+
+```{python}
+min_cells = 25
+```
+
+Filter genes that are expressed in less than `{python} min_cells` cells.
+
+Total number of genes before filtering: `{python} adata.n_vars`
+```{python}
+sc.pp.filter_genes(adata, min_cells=min_cells)
+```
+
+Total number of genes after filtering: `{python} adata.n_vars`
+
+Plot most expressed genes in the dataset:
+
+```{python}
+sc.pl.highest_expr_genes(adata,n_top=15)
+```
+
+## Remove some genes 
+
+We remove MALAT1, mitochondrial genes and ribosomal genes.
+
+Total number of genes before filtering: `{python} adata.n_vars`
+
+```{python}
+mask = adata.var_names.str.startswith("MT-")
+adata = adata[:, ~mask].copy()
+
+mask = adata.var_names.str.startswith(("RPL","RPS"))
+adata = adata[:, ~mask].copy()
+
+mask = adata.var_names == "MALAT1"
+adata = adata[:, ~mask].copy()
+```
+
+Total number of genes after filtering: `{python} adata.n_vars`
+
+# Save object
+
+The filtered object has `{python} adata.n_obs` cells and `{python} adata.n_vars` genes.
+
+```{python}
 resdir = "0_QC/outputs/files/"
 os.makedirs(resdir, exist_ok=True)
-sc.write("0_QC/outputs/files/sc.h5ad", adata)
+sc.write(filename="0_QC/outputs/files/sc.h5ad", adata=adata, ext="h5ad")
+
+# print dimensions
+
+adata.shape
 ```
 
 # Session info 

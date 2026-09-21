@@ -15,7 +15,7 @@ data/*
 
 # Quarto scratch/cache directory
 /.quarto/
-**/*.quarto_ipynb
+**/*.quarto_ipynb*
 
 # outputs
 **/outputs/*
@@ -27,3 +27,7 @@ uv.lock
 # init script
 
 init.sh
+
+# metadata
+metadata/*
+!metadata/.gitkeep
