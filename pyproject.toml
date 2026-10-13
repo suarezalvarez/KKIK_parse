@@ -4,6 +4,8 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "glasbey>=0.3.0",
+    "harmonypy>=2.1.0",
+    "igraph>=1.0.0",
     "jupyter>=1.1.1",
     "openpyxl>=3.1.5",
     "plotnine>=0.15.3",

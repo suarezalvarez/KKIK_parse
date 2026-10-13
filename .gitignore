@@ -31,3 +31,4 @@ init.sh
 # metadata
 metadata/*
 !metadata/.gitkeep
+**/*.quarto_ipynb

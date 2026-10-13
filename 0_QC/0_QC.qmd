@@ -165,6 +165,53 @@ n_obs_df = pd.DataFrame(n_obs_dict.items(), columns=["sample", "n_obs"])
 )
 ```
 
+
+## Sequencing depth and saturation (Parse report)
+
+### Median transcripts per cell and the projection if 50% saturation had been reached
+```{python}
+
+seq = pd.read_csv("data/agg_sample_summary.csv")
+seq = seq[seq["sample"].isin(sample_folders)]
+
+seq_long = seq.melt(
+    id_vars="sample",
+    value_vars=["hg38_median_tscp_per_cell", "hg38_median_tscp_at50"],
+    var_name="depth",
+    value_name="median_tscp",
+).replace(
+    {
+        "hg38_median_tscp_per_cell": "current",
+        "hg38_median_tscp_at50": "at 50% saturation",
+    }
+)
+
+
+# Median transcripts per cell (current vs at 50% saturation)
+(
+    gg.ggplot(seq_long, gg.aes(x="sample", y="median_tscp", fill="depth"))
+    + gg.geom_col(position="dodge")
+    + gg.labs(y="Median transcripts per cell")
+    + gg.theme_minimal()
+    + gg.theme(axis_text_x=gg.element_text(angle=45, hjust=1, vjust=1))
+)
+
+```
+
+### Sequencing saturation
+```{python}
+# Saturation
+
+(
+    gg.ggplot(seq, gg.aes(x="sample", y="sequencing_saturation"))
+    + gg.geom_col()
+    + gg.labs(y="Sequencing saturation")
+    + gg.theme_minimal()
+    + gg.theme(axis_text_x=gg.element_text(angle=45, hjust=1, vjust=1))
+)
+```
+
+
 ## Compute QC metrics
 
 Compute percentage of mitochondrial reads, percentage of ribosomal reads, percentage of hemoglobin reads, and plot QC metrics as violin plots and as scatter plots.
@@ -358,36 +405,52 @@ print("\n::::")
 ```{python}
 nmad_thr = 5
 nmad_mt_thr = 5
+min_counts = 300
+min_genes = 200
 ```
 
-Using `{python} nmad_thr` nmads for counts and features thresholds and `{python} nmad_mt_thr` for mitochondrial. This is the most permissive option, and this will be explored in latter steps of the pipeline.
+Using `{python} nmad_thr` nmads for counts and features thresholds and `{python} nmad_mt_thr` for mitochondrial. Hard thresholds were used for counts (`{python} min_counts`) and features (`{python} min_genes`). The cells that would be removed by hard thresholds are kept and will be revisited in latter stages of the analysis.
 
 ```{python}
 for adata in adatas.values():
+    adata.obs["low_depth"] = (adata.obs["total_counts"] < min_counts) | (
+        adata.obs["n_genes_by_counts"] < min_genes
+    )
+    # only MAD-based outliers are removed; low-depth cells are kept and flagged
     adata.obs["keep"] = (~adata.obs[f"outlier_{nmad_thr}"]) & (
         ~adata.obs[f"mt_outlier_{nmad_mt_thr}"]
+    )
+    adata.obs["qc_status"] = pd.Categorical(
+        np.select(
+            [~adata.obs["keep"], adata.obs["low_depth"]],
+            ["removed (MAD)", "low depth (flagged)"],
+            default="pass",
+        ),
+        categories=["removed (MAD)", "low depth (flagged)", "pass"],
     )
 ```
 
 ```{python}
 joint_obs = pd.concat([adata.obs for adata in adatas.values()])
+qc_cols = ["pink", "gold", "cornflowerblue"]
 
-(
-    gg.ggplot(joint_obs, gg.aes(x="sample", fill="keep"))
-    + gg.geom_bar(position="fill")
-    + gg.labs(y="Proportion")
-    + gg.theme_minimal()
-    + gg.theme(
-        text=gg.element_text(family="Nimbus sans"),
-        axis_text_x=gg.element_text(angle=45, hjust=1, vjust=1),
+for position, ylab in [("fill", "Proportion"), ("stack", "Number of cells")]:
+    display(
+        gg.ggplot(joint_obs, gg.aes(x="sample", fill="qc_status"))
+        + gg.geom_bar(position=position)
+        + gg.labs(y=ylab)
+        + gg.theme_minimal()
+        + gg.theme(
+            text=gg.element_text(family="Nimbus sans"),
+            axis_text_x=gg.element_text(angle=45, hjust=1, vjust=1),
+        )
+        + gg.scale_fill_manual(values=qc_cols)
     )
-    + gg.scale_fill_manual(values=["pink", "cornflowerblue"])
-)
 ```
 
 # Apply cell QC
 
-Keep only cells flagged as `keep` and save filtered data.
+Keep only cells flagged as `keep` (MAD thresholds) and save filtered data. Cells below `{python} min_counts` transcripts or `{python} min_genes` genes are kept and flagged in `obs["low_depth"]` / `obs["qc_status"]`.
 
 ```{python}
 for key in adatas.keys():
@@ -443,6 +506,18 @@ The filtered object has `{python} adata.n_obs` cells and `{python} adata.n_vars`
 ```{python}
 resdir = "0_QC/outputs/files/"
 os.makedirs(resdir, exist_ok=True)
+
+# anndataR cannot read the "nullable-string-array" encoding that pandas string
+# dtypes produce, so store indices and string columns as plain object strings
+adata.obs_names = adata.obs_names.astype(object)
+adata.var_names = adata.var_names.astype(object)
+for df in (adata.obs, adata.var):
+    for col in df.columns:
+        if pd.api.types.is_string_dtype(df[col]) and not isinstance(
+            df[col].dtype, pd.CategoricalDtype
+        ):
+            df[col] = df[col].astype(object)
+
 sc.write(filename="0_QC/outputs/files/sc.h5ad", adata=adata, ext="h5ad")
 
 # print dimensions

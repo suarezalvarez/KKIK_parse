@@ -1,0 +1,175 @@
+---
+title: "Annotation"
+author: "Martín Suárez Álvarez"
+date: today
+format: 
+    html:
+        embed-resources: true
+        code-fold: true
+        theme: minty
+        toc: true
+jupyter: kkik_parse
+---
+
+# Pre
+
+::: {.callout-note}
+The `uv` python interpreter lives in `~/minstallation/.venvs/KKIK_parse/bin/python`
+:::
+
+```{python}
+import scanpy as sc
+import pandas as pd
+import os
+import matplotlib.pyplot as plt
+import session_info
+import glasbey
+import yaml
+import plotnine as gg
+```
+
+Figure settings:
+
+```{python}
+plt.rcParams["font.sans-serif"] = "Nimbus sans"
+```
+
+Random settings / parameters:
+
+```{python}
+step = "4_annotation"
+random_state = 275
+markers_file = "4_annotation/helpers/markers.csv"
+with open(f"{step}/config/annotation.yml") as fh:
+    annotation = yaml.safe_load(fh)
+res = annotation["resolution"]
+```
+
+Create folders for outputs:
+
+```{python}
+resdir = "4_annotation/outputs/files"
+os.makedirs(resdir, exist_ok=True)
+```
+
+Read object from previous step:
+
+```{python}
+adata = sc.read_h5ad("3_clustering/outputs/files/sc.h5ad")
+```
+
+# Plot DE markers for resolution 1
+
+```{python}
+sc.pl.rank_genes_groups(adata,key=f"markers_{res}")
+```
+
+# Plot general markers
+
+
+```{python}
+markers = pd.read_csv(markers_file)
+genes_in = [marker for marker in markers["gene"] if marker in adata.var_names]
+markers = markers.iloc[markers["gene"].isin(genes_in)]
+```
+
+
+```{python}
+#| output: asis
+print("::: {.panel-tabset}\n")
+for cs, genes in markers.groupby("cell_state", sort=False)["gene"]:
+    print(f"\n## {cs}\n")
+    sc.pl.embedding(
+        adata,
+        "umap_harmony",
+        color=[*genes.tolist(), f"leiden_{res}"],
+        ncols=4,
+        cmap="magma",
+    )
+print("\n:::\n")
+```
+
+# QC metrics at resolution `{python} res`
+
+```{python}
+sc.pl.violin(
+    adata,
+    keys=[
+        "total_counts",
+        "log1p_total_counts",
+        "n_genes_by_counts",
+        "log1p_n_genes_by_counts",
+        "pct_counts_mt",
+    ],
+    groupby=f"leiden_{res}",
+    stripplot=False,
+    dodge=False,
+)
+```
+
+# Sample composition by cluster
+
+
+```{python}
+ct = (
+    pd.crosstab(
+        adata.obs[f"leiden_{res}"],
+        adata.obs["sample"],
+        normalize="index",
+    )
+    .reset_index()
+    .melt(id_vars="leiden_1.0")
+)
+
+(
+    gg.ggplot(ct, gg.aes(x=f"leiden_{res}", y="value", fill="sample"))
+    + gg.geom_col(position="fill")
+    + gg.scale_fill_cmap_d("Set2")
+    + gg.theme_bw()
+)
+```
+
+# Clusters 0, 1 and 2
+
+Clusters 0 to 2 show low quality and high percentage of mitochondrial reads, with a slight stromal signature (eg., expression of *RGS5*, *COL1A1*, *DCN*...). These cells are labeles as *"Stromal"* and will be further analyzed. 
+
+# Assign compartment
+
+`cell_type_1` will be the compartment assigned (immune / epithelial / stromal). These will be further subclustered. The dictionary of clusters at resolution `{python} res` to compartment is saved in `4_annotation/config/annotation.yml`.
+
+```{python}
+adata.obs["cell_type_1"] = adata.obs[f"leiden_{res}"].map(annotation["clusters"])
+```
+
+Cluster to compartment equivalence:
+
+```{python}
+pd.DataFrame.from_dict(annotation["clusters"],orient="index").sort_index(key=lambda i: i.astype(int))
+```
+
+## Plot in UMAP
+
+
+```{python}
+sc.pl.embedding(adata, basis="umap_harmony",color="cell_type_1")
+```
+
+# Save objects
+
+
+```{python}
+sc.write(adata=adata, filename=f"{resdir}/sc.h5ad", ext="h5ad")
+
+compartments = [
+    compartment
+    for compartment in adata.obs["cell_type_1"].cat.categories.tolist()
+    if compartment != "Low_quality"
+]
+
+for compartment in compartments:
+    sc.write(
+        adata=adata[adata.obs["cell_type_1"] == compartment].copy(),
+        filename=f"{resdir}/{compartment}.h5ad",
+        ext="h5ad",
+    )
+```

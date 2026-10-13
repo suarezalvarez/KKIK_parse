@@ -55,15 +55,15 @@ adata = sc.read_h5ad("0_QC/outputs/files/sc.h5ad")
 
 Save counts in layer counts:
 ```{python}
-adata.layers["counts"] = adata.X
+adata.layers["counts"] = adata.X.copy()
 ```
 
 Log normalize with median as scaling factor (default) and save in layer.
 
 ```{python}
-sc.pp.normalize_total(adata,target_sum=None)
+sc.pp.normalize_total(adata, target_sum=None)
 sc.pp.log1p(adata)
-adata.layers["lognorm"] = adata.X
+adata.layers["lognorm"] = adata.X.copy()
 ```
 
 # Highly variable genes
@@ -94,7 +94,7 @@ sc.pl.pca(
 )
 sc.pl.pca(
     adata,
-    color=["log1p_total_counts", "log1p_n_genes_by_counts"],
+    color=["log1p_total_counts", "log1p_n_genes_by_counts","qc_status"],
     cmap="magma",
 )
 
@@ -113,10 +113,10 @@ sc.tl.umap(adata,random_state=random_state)
 
 #### QC
 ```{python}
-sc.pl.umap(adata,color="sample")
+sc.pl.umap(adata, color="sample")
 sc.pl.umap(
     adata,
-    color=["log1p_total_counts", "log1p_n_genes_by_counts"],
+    color=["log1p_total_counts", "log1p_n_genes_by_counts", "qc_status"],
     cmap="magma",
 )
 ```
@@ -145,6 +145,93 @@ gois = [
     "GZMA",
     "GZMB",
 ]
+sc.pl.umap(
+    adata,
+    color=gois,
+    cmap="magma",
+)
+fig = plt.gcf()
+fig.set_size_inches(29, 24)
+```
+
+
+# Remove flagged cells
+
+The flagged low quality cells occupy the same space in UMAP and they show a shape that indicates their low quality. I will remove for further analyses. 
+
+Cells before filtering: `{python} adata.n_obs`
+
+```{python}
+adata = adata[adata.obs["qc_status"] == "pass"].copy()
+```
+
+Cells after filtering: `{python} adata.n_obs`
+
+# Repeat dimensional reduction 
+
+Re-normalize and select HVGs.
+
+```{python}
+adata.X = adata.layers["counts"].copy()
+sc.pp.normalize_total(adata, target_sum=None)
+adata.uns.pop("log1p", None)
+sc.pp.log1p(adata)
+adata.layers["lognorm"] = adata.X.copy()
+sc.pp.highly_variable_genes(adata, layer="lognorm", batch_key="sample")
+sc.pl.highly_variable_genes(adata, show=True)
+
+sc.pp.pca(
+    adata,
+    mask_var="highly_variable",
+)
+```
+
+Sanity check: the max of counts should be an integer, and logcounts is probably not integer:
+
+- counts: `{python} adata.layers["counts"].max()`
+- logcounts: `{python} adata.layers["lognorm"].max()`
+
+### Plot cells in PCA space
+
+
+```{python}
+sc.pl.pca(
+    adata,
+    color=["sample"],
+    cmap="magma",
+)
+sc.pl.pca(
+    adata,
+    color=["log1p_total_counts", "log1p_n_genes_by_counts","qc_status"],
+    cmap="magma",
+)
+
+
+sc.pl.pca_loadings(adata)
+```
+
+## UMAP
+
+```{python}
+sc.pp.neighbors(adata)
+sc.tl.umap(adata,random_state=random_state)
+```
+
+### Plot cells in UMAP space
+
+#### QC
+```{python}
+sc.pl.umap(adata, color="sample")
+sc.pl.umap(
+    adata,
+    color=["log1p_total_counts", "log1p_n_genes_by_counts", "qc_status"],
+    cmap="magma",
+)
+```
+
+#### Specific genes
+
+```{python}
 sc.pl.umap(
     adata,
     color=gois,

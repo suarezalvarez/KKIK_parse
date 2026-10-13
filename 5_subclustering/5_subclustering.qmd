@@ -1,0 +1,303 @@
+---
+title: "Compartment re-processing"
+author: "Martín Suárez Álvarez"
+date: today
+format:
+    html:
+        embed-resources: true
+        code-fold: true
+        theme: minty
+        toc: true
+jupyter: kkik_parse
+---
+
+# Pre
+
+::: {.callout-note}
+The `uv` python interpreter lives in `~/minstallation/.venvs/KKIK_parse/bin/python`
+
+Render one report per compartment from the project root, e.g.:
+
+```bash
+quarto render 5_subclustering/5_subclustering.qmd -P compartment:Immune --output 5_subclustering_Immune.html
+```
+:::
+
+Parameters:
+
+```{python}
+#| tags: [parameters]
+compartment = "Immune"
+```
+
+```{python}
+import scanpy as sc
+import pandas as pd
+import os
+import matplotlib.pyplot as plt
+import harmonypy as hm
+import plotnine as gg
+import session_info
+```
+
+Figure settings:
+
+```{python}
+plt.rcParams["font.sans-serif"] = "Nimbus sans"
+```
+
+Random settings / parameters:
+
+```{python}
+step = "5_subclustering"
+random_state = 275
+n_pcs = 30
+min_dist = 0.8
+spread = 1.0
+resolutions = [0.2, 0.4, 0.6, 0.8, 1.0, 1.2]
+qc_metrics = [
+    "log1p_total_counts",
+    "log1p_n_genes_by_counts",
+    "pct_counts_mt",
+    "pct_counts_ribo",
+]
+lineage_markers = ["EPCAM", "KRT8", "PTPRC", "CD3E", "CD79A", "COL1A1", "PDGFRA", "PECAM1"]
+```
+
+Create folders for outputs:
+
+```{python}
+resdir = f"{step}/outputs/{compartment}/files"
+os.makedirs(resdir, exist_ok=True)
+```
+
+Read the `{python} compartment` object from the annotation step:
+
+```{python}
+adata = sc.read_h5ad(f"4_annotation/outputs/files/{compartment}.h5ad")
+```
+
+The `{python} compartment` compartment has `{python} adata.n_obs` cells.
+
+Remove results computed on the full dataset, keeping the global clusters as a reference:
+
+```{python}
+adata.obs["leiden_global"] = adata.obs["leiden_1.0"]
+adata.obs = adata.obs.drop(columns=[c for c in adata.obs.columns if c.startswith("leiden_0") or c.startswith("leiden_1")])
+for key in list(adata.uns):
+    if key not in ["sample_colors", "qc_status_colors"]:
+        del adata.uns[key]
+adata.obsm.clear()
+adata.obsp.clear()
+adata.varm.clear()
+adata.obs = adata.obs.apply(lambda c: c.cat.remove_unused_categories() if c.dtype == "category" else c)
+```
+
+# QC of the subset
+
+## Cells per sample
+
+```{python}
+(
+    gg.ggplot(adata.obs, gg.aes(x="sample", fill="condition"))
+    + gg.geom_bar()
+    + gg.theme_bw()
+    + gg.theme(axis_text_x=gg.element_text(rotation=90))
+    + gg.labs(y="cells")
+)
+```
+
+## QC metrics per sample
+
+```{python}
+#| output: asis
+print("::: {.panel-tabset}\n")
+for metric in qc_metrics:
+    print(f"\n### {metric}\n")
+    sc.pl.violin(adata, metric, groupby="sample", rotation=90, size=0)
+print("\n:::\n")
+```
+
+```{python}
+sc.pl.scatter(adata, x="total_counts", y="n_genes_by_counts", color="pct_counts_mt")
+```
+
+# Normalization
+
+Start again from raw counts and log normalize with median as scaling factor.
+
+```{python}
+adata.X = adata.layers["counts"].copy()
+sc.pp.normalize_total(adata, target_sum=None)
+sc.pp.log1p(adata)
+adata.layers["lognorm"] = adata.X.copy()
+```
+
+Sanity check: the max of counts should be an integer, and logcounts is probably not integer:
+
+- counts: `{python} adata.layers["counts"].max()`
+- logcounts: `{python} adata.layers["lognorm"].max()`
+
+# Highly variable genes
+
+Selection using `seurat` method with `sample` as batch, recomputed within the compartment.
+
+```{python}
+sc.pp.highly_variable_genes(adata, layer="lognorm", batch_key="sample")
+sc.pl.highly_variable_genes(adata, show=True)
+```
+
+Number of HVGs: `{python} int(adata.var["highly_variable"].sum())`
+
+# Dimensional reduction
+
+## PCA
+
+```{python}
+sc.pp.pca(adata, mask_var="highly_variable", random_state=random_state)
+sc.pl.pca_variance_ratio(adata, n_pcs=50, log=True)
+```
+
+```{python}
+sc.pl.pca(adata, color=["sample"])
+sc.pl.pca(adata, color=["log1p_total_counts", "log1p_n_genes_by_counts"], cmap="magma")
+sc.pl.pca_loadings(adata)
+```
+
+## UMAP (pre-integration)
+
+```{python}
+sc.pp.neighbors(adata, n_pcs=n_pcs, random_state=random_state)
+sc.tl.umap(adata, random_state=random_state)
+```
+
+```{python}
+sc.pl.umap(adata, color=["sample", "condition", "leiden_global"])
+sc.pl.umap(adata, color=qc_metrics, cmap="magma")
+```
+
+# Integration with `harmonypy`
+
+```{python}
+harmony_out = hm.run_harmony(adata.obsm["X_pca"][:, :n_pcs], adata.obs, "sample", random_state=random_state)
+adata.obsm["X_pca_harmony"] = harmony_out.Z_corr
+```
+
+```{python}
+sc.pp.neighbors(
+    adata, use_rep="X_pca_harmony", random_state=random_state, key_added="nn_harmony"
+)
+sc.tl.umap(
+    adata,
+    random_state=random_state,
+    neighbors_key="nn_harmony",
+    key_added="umap_harmony",
+    min_dist=min_dist,
+    spread=spread,
+)
+```
+
+## UMAP vs UMAP on harmony embeddings
+
+```{python}
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+sc.pl.embedding(adata, basis="umap", color=["sample"], ax=axes[0], show=False, legend_loc=None)
+sc.pl.embedding(adata, basis="umap_harmony", color=["sample"], ax=axes[1], show=False)
+for ax in axes:
+    ax.set_aspect("equal")
+fig.show()
+```
+
+```{python}
+sc.pl.embedding(adata, basis="umap_harmony", color=["condition", "leiden_global"])
+sc.pl.embedding(adata, basis="umap_harmony", color=qc_metrics, cmap="magma")
+```
+
+## Lineage markers
+
+Cells from other compartments (contamination or doublets) should show up here.
+
+```{python}
+sc.pl.embedding(
+    adata,
+    basis="umap_harmony",
+    color=[g for g in lineage_markers if g in adata.var_names],
+    cmap="magma",
+    ncols=4,
+)
+```
+
+# Leiden clustering
+
+```{python}
+for res in resolutions:
+    sc.tl.leiden(
+        adata,
+        flavor="igraph",
+        n_iterations=2,
+        neighbors_key="nn_harmony",
+        resolution=res,
+        key_added=f"leiden_{res}",
+        random_state=random_state,
+    )
+```
+
+```{python}
+#| output: asis
+print("::: {.panel-tabset}\n")
+for res in resolutions:
+    print(f"\n### {res}\n")
+    sc.pl.embedding(adata, basis="umap_harmony", color=f"leiden_{res}", legend_loc="on data")
+print("\n:::\n")
+```
+
+## Markers per resolution
+
+```{python}
+for res in resolutions:
+    sc.tl.rank_genes_groups(
+        adata,
+        groupby=f"leiden_{res}",
+        method="wilcoxon",
+        use_raw=False,
+        key_added=f"markers_{res}",
+    )
+```
+
+```{python}
+#| output: asis
+print("::: {.panel-tabset}\n")
+for res in resolutions:
+    print(f"\n### {res}\n")
+    sc.pl.rank_genes_groups_dotplot(adata, key=f"markers_{res}", n_genes=5)
+print("\n:::\n")
+```
+
+## Quality metrics per cluster
+
+```{python}
+#| output: asis
+print("::: {.panel-tabset}\n")
+for res in resolutions:
+    print(f"\n### {res}\n")
+    sc.pl.violin(
+        adata,
+        ["log1p_total_counts", "log1p_n_genes_by_counts", "pct_counts_mt"],
+        groupby=f"leiden_{res}",
+        rotation=90,
+        size=0,
+    )
+print("\n:::\n")
+```
+
+# Save
+
+```{python}
+sc.write(adata=adata, filename=f"{resdir}/sc.h5ad", ext="h5ad")
+```
+
+# Session info
+
+```{python}
+session_info.show(std_lib=True, dependencies=True)
+```

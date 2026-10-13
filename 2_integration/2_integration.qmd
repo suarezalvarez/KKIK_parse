@@ -1,0 +1,175 @@
+---
+title: "Integration"
+author: "Martín Suárez Álvarez"
+date: today
+format: 
+    html:
+        embed-resources: true
+        code-fold: true
+        theme: minty
+        toc: true
+jupyter: kkik_parse
+---
+
+# Pre
+
+::: {.callout-note}
+The `uv` python interpreter lives in `~/minstallation/.venvs/KKIK_parse/bin/python`
+:::
+
+```{python}
+import scanpy as sc
+import pandas as pd
+import os
+import matplotlib.pyplot as plt
+import harmonypy as hm
+import session_info
+```
+
+Figure settings:
+
+```{python}
+plt.rcParams["font.sans-serif"] = "Nimbus sans"
+```
+
+Random settings / parameters:
+
+```{python}
+random_state = 275
+min_dist = 0.8
+spread = 1.0
+```
+
+Create folders for outputs:
+
+```{python}
+resdir = "2_integration/outputs/files"
+os.makedirs(resdir,exist_ok=True)
+```
+
+Read object from previous step:
+
+```{python}
+adata = sc.read_h5ad("1_normalization/outputs/files/sc.h5ad")
+```
+
+# Pre-integration
+
+```{python}
+sc.pl.umap(adata, color=["sample", "log1p_total_counts", "log1p_n_genes_by_counts"])
+```
+
+# Run integration with `harmonypy`
+
+```{python}
+pcs = adata.obsm['X_pca'] 
+
+# Run Harmony
+harmony_out = hm.run_harmony(pcs, adata.obs, "sample")
+
+# Z_corr is already a numpy array with shape (n_cells, n_pcs)
+adata.obsm['X_pca_harmony'] = harmony_out.Z_corr
+```
+
+Use harmonized PCs for downstream analysis:
+```{python}
+sc.pp.neighbors(
+    adata, use_rep="X_pca_harmony", random_state=random_state, key_added="nn_harmony"
+)
+sc.tl.umap(
+    adata,
+    random_state=random_state,
+    neighbors_key="nn_harmony",
+    key_added="umap_harmony",
+)
+```
+
+
+```{python}
+sc.pl.embedding(
+    adata,
+    basis="umap_harmony",
+    color=["sample", "log1p_total_counts", "log1p_n_genes_by_counts"],
+)
+```
+
+# Compare embeddings
+
+## PCA vs Harmony
+
+```{python}
+fig, axes = plt.subplots(1, 2)
+sc.pl.embedding(
+    adata,
+    basis="pca",
+    color=["sample"],
+    ax=axes[0],
+    show=False,
+)
+sc.pl.embedding(
+    adata,
+    basis="X_pca_harmony",
+    color=["sample"],
+    ax=axes[1],
+    show=False,
+)
+for ax in axes:
+    ax.set_aspect("equal")
+fig.show()
+```
+
+## UMAP vs UMAP on harmony embeddings
+
+```{python}
+fig, axes = plt.subplots(1, 2)
+sc.pl.embedding(
+    adata,
+    basis="umap",
+    color=["sample"],
+    ax=axes[0],
+    show=False,
+)
+sc.pl.embedding(
+    adata,
+    basis="umap_harmony",
+    color=["sample"],
+    ax=axes[1],
+    show=False,
+)
+for ax in axes:
+    ax.set_aspect("equal")
+fig.show()
+```
+
+# Set min_dist and spread parameters for final umap
+
+```{python}
+sc.tl.umap(
+    adata,
+    random_state=random_state,
+    neighbors_key="nn_harmony",
+    key_added="umap_harmony",
+    min_dist=min_dist,
+    spread=spread,
+)
+```
+
+```{python}
+sc.pl.embedding(
+    adata,
+    basis="umap_harmony",
+    color=["sample", "log1p_total_counts", "log1p_n_genes_by_counts"],
+)
+```
+
+# Save
+
+```{python}
+sc.write(adata=adata, filename=f"{resdir}/sc.h5ad", ext="h5ad")
+```
+
+# Session info 
+
+```{python}
+session_info.show(std_lib=True,dependencies=True)
+```

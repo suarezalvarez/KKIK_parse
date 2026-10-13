@@ -1,0 +1,67 @@
+---
+title: "scDblFinder"
+author: "Martín Suárez Álvarez"
+date: today
+format: 
+    html:
+        embed-resources: true
+        code-fold: true
+        theme: minty
+        toc: true
+---
+
+# Pre
+
+::: {.callout-note}
+The `uv` python interpreter lives in `~/minstallation/.venvs/KKIK_parse/bin/python`.
+The `R` installation used lives in `/srv/data/users/shared_conda_alejandra_martin/pipelineR/bin/R`. 
+:::
+
+```{r}
+library(anndataR)
+library(SingleCellExperiment)
+library(scDblFinder)
+library(tidyverse)
+```
+
+
+Read object 
+```{r}
+h5ad_file <- "0_QC/outputs/files/sc.h5ad"
+sc <- read_h5ad(h5ad_file, as = "SingleCellExperiment")
+```
+
+Keep only cells that pass QC
+
+```{r}
+sc$qc_status |>
+  table()
+```
+
+```{r}
+sc <- sc[, sc$qc_status == "pass"]
+```
+
+# Run scDblFinder
+
+
+```{r}
+# change name of assay to counts
+
+names(assays(sc)) <- "counts"
+
+set.seed(123)
+sc <- scDblFinder(sc, clusters = T, samples = "sample")
+
+metadata <- colData(sc) |> as.data.frame()
+save_meta <- metadata |>
+  rownames_to_column("barcode") |>
+  select(barcode, scDblFinder.score, scDblFinder.class)
+
+write_csv(save_meta, "0_QC/outputs/files/scDblFinder.csv")
+```
+
+# Session info
+```{r}
+sessionInfo()
+```

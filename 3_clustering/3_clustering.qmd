@@ -1,0 +1,142 @@
+---
+title: "Clustering"
+author: "Martín Suárez Álvarez"
+date: today
+format: 
+    html:
+        embed-resources: true
+        code-fold: true
+        theme: minty
+        toc: true
+jupyter: kkik_parse
+---
+
+
+# Pre
+
+::: {.callout-note}
+The `uv` python interpreter lives in `~/minstallation/.venvs/KKIK_parse/bin/python`
+:::
+
+```{python}
+import scanpy as sc
+import pandas as pd
+import os
+import matplotlib.pyplot as plt
+import session_info
+import glasbey
+```
+
+Figure settings:
+
+```{python}
+plt.rcParams["font.sans-serif"] = "Nimbus sans"
+```
+
+Random settings / parameters:
+
+```{python}
+random_state = 275
+resolutions = [0.2, 0.4, 0.6, 0.8, 1.0, 1.2]
+```
+
+Create folders for outputs:
+
+```{python}
+resdir = "3_clustering/outputs/files"
+os.makedirs(resdir,exist_ok=True)
+```
+
+Read object from previous step:
+
+```{python}
+adata = sc.read_h5ad("2_integration/outputs/files/sc.h5ad")
+```
+
+
+# Leiden clustering
+
+```{python}
+for res in resolutions:
+    sc.tl.leiden(
+        adata,
+        flavor="igraph",
+        n_iterations=2,
+        neighbors_key="nn_harmony",
+        resolution=res,
+        key_added=f"leiden_{res}",
+    )
+```
+
+
+```{python}
+sc.pl.embedding(
+    adata,
+    "umap_harmony",
+    color=[f"leiden_{res}" for res in resolutions]
+)
+```
+
+# Inspect markers for each resolution
+
+Depending on DGE, select a resolution for annotation
+
+```{python}
+for res in resolutions:
+    sc.tl.rank_genes_groups(
+        adata,
+        groupby=f"leiden_{res}",
+        method="wilcoxon",
+        use_raw=False,
+        key_added=f"markers_{res}",
+    )
+```
+
+```{python}
+for res in resolutions:
+    sc.pl.rank_genes_groups_dotplot(adata, key=f"markers_{res}")
+```
+
+# Markers per cluster
+
+```{python}
+#| output: asis
+print("::: {.panel-tabset}\n")
+for res in resolutions:
+    print(f"\n### Leiden {res}\n")
+    sc.pl.rank_genes_groups(
+        adata,
+        key=f"markers_{res}",
+    )
+print("\n:::\n")
+```
+
+# Quality metrics per cluster
+
+```{python}
+#| output: asis
+print("::: {.panel-tabset}\n")
+for res in resolutions:
+    print(f"\n### Leiden {res}\n")
+    sc.pl.violin(
+        adata,
+        ["log1p_total_counts", "log1p_n_genes_by_counts"],
+        groupby=f"leiden_{res}",
+        dodge=False,
+        rotation=90,
+    )
+print("\n:::\n")
+```
+
+
+# Save
+
+```{python}
+sc.write(adata=adata, filename=f"{resdir}/sc.h5ad", ext="h5ad")
+```
+
+# Session info 
+
+```{python}
+session_info.show(std_lib=True,dependencies=True)
+```

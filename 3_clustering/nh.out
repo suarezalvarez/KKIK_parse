@@ -1,0 +1,50 @@
+nohup: ignoring input
+
+Starting kkik_parse kernel...[IPKernelApp] WARNING | Kernel is running over TCP without encryption. All communication (including code and outputs) is sent in plain text and is susceptible to eavesdropping. Use IPC transport or launch with kernel manager-provisioned CurveZMQ keys to enable transport encryption.
+Done
+
+Executing '3_clustering.quarto_ipynb_1'
+  Cell 1/11: ''...Done
+  Cell 2/11: ''...Done
+  Cell 3/11: ''...Done
+  Cell 4/11: ''...Done
+  Cell 5/11: ''...Done
+  Cell 6/11: ''...Done
+  Cell 7/11: ''...Done
+  Cell 8/11: ''...Done
+  Cell 9/11: ''...Done
+  Cell 10/11: ''...Done
+  Cell 11/11: ''...Done
+
+[1mpandoc [22m
+  to: html
+  output-file: 3_clustering.html
+  standalone: true
+  embed-resources: true
+  section-divs: true
+  html-math-method: mathjax
+  wrap: none
+  default-image-extension: png
+  toc: true
+  variables: {}
+  
+[1mmetadata[22m
+  document-css: false
+  link-citations: true
+  date-format: long
+  lang: en
+  engines:
+    - path: /home/marsua/minstallation/miniforge3/share/quarto/extension-subtrees/julia-engine/_extensions/julia-engine/julia-engine.js
+  title: Clustering
+  author: Martín Suárez Álvarez
+  date: today
+  jupyter: kkik_parse
+  theme: minty
+  
+Output created: 3_clustering.html
+
+[32mWatching files for changes[39m
+[32mBrowse at [39m[4m[32mhttp://localhost:7078/3_clustering/3_clustering.html[39m[24m
+Listening on http://127.0.0.1:7078/
+mhttp://localhost:6882/2_integration/2_integration.html[39m[24m
+Listening on http://127.0.0.1:6882/
