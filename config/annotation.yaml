@@ -1,0 +1,17 @@
+epithelial:
+  resolution: 0.6
+  clusters:
+    "0": "Low_quality"
+    "1": "Low_quality"
+    "2": "Stem_TA"
+    "3": "Stress_IEG_high" # FOSB/NR4A1/JUN, no specific lineage
+    "4": "Colonocytes"
+    "5": "Goblet_cells"
+    "6": "Colonocytes"
+    "7": "Unresolved" # CD55/MUC13/TMPRSS2, 53 cells
+    "8": "Enteroendocrine_cells"
+    "9": "Early_colonocytes" # LAMC2/LAMB3/LAMA3+, tentative
+    "10": "Low_quality"
+    "11": "Stromal_contamination" # COL3A1/PDGFRA/ADAMDEC1, possible doublets
+    "12": "Immune_contamination" # PTPRC/T cell genes, possible doublets
+    "13": "BEST4_colonocytes"
