@@ -1,3 +1,40 @@
+stromal:
+  # first-pass clusters removed before re-processing in 5_subclustering
+  remove:
+    resolution: 0.2
+    clusters: ["0"] # low depth, no stromal identity (global clusters 0-2)
+  # annotation (6_annotation): clusters -> cell_type_3, cell_type_2 groups cell_type_3
+  resolution: 1.0
+  clusters:
+    "0": "Capillary_endothelium" # PLVAP
+    "1": "Capillary_endothelium" # weak arterial signal (SEMA3G, HEY1), merged
+    "2": "Venous_endothelium" # ACKR1, SELP, MADCAM1
+    "3": "Pericytes" # RGS5, NOTCH3
+    "4": "Stem_niche_fibroblasts" # GREM1, C3, SFRP2, RSPO3
+    "5": "Fibroblasts_ADAMDEC1"
+    "6": "Fibroblasts_ADAMDEC1"
+    "7": "Fibroblasts_COL_high" # COL1A1/COL3A1, LUM, DCN; CHI3L1, MMP3
+    "8": "Fibroblasts_NRG1" # PDGFRA-high, NRG1, PAPPA; between crypt-top and ADAMDEC1
+    "9": "Fibroblasts_crypt_top" # SOX6, F3, PDGFRA-high, POSTN, BMP4
+    "10": "Smooth_muscle_cells" # MYH11, MYOCD
+    "11": "Immune_contamination" # PTPRC, T cell genes
+    "12": "Lymphatic_endothelium" # PROX1, CCL21, LYVE1
+    "13": "Endothelial_fibroblast_doublets" # PECAM1 + PDGFRA/ADAMDEC1, 2x counts
+  cell_type_2:
+    Capillary_endothelium: "Endothelial_cells"
+    Venous_endothelium: "Endothelial_cells"
+    Lymphatic_endothelium: "Lymphatic_endothelium"
+    Pericytes: "Pericytes"
+    Smooth_muscle_cells: "Smooth_muscle_cells"
+    Stem_niche_fibroblasts: "Fibroblasts"
+    Fibroblasts_ADAMDEC1: "Fibroblasts"
+    Fibroblasts_COL_high: "Fibroblasts"
+    Fibroblasts_NRG1: "Fibroblasts"
+    Fibroblasts_crypt_top: "Fibroblasts"
+  exclude:
+    - "Immune_contamination"
+    - "Endothelial_fibroblast_doublets"
+
 epithelial:
   resolution: 0.6
   clusters:

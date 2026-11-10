@@ -131,7 +131,7 @@ ct = (
 
 # Clusters 0, 1 and 2
 
-Clusters 0 to 2 show low quality and high percentage of mitochondrial reads, with a slight stromal signature (eg., expression of *RGS5*, *COL1A1*, *DCN*...). These cells are labeles as *"Stromal"* and will be further analyzed. 
+Clusters 0 to 2 show low quality and high percentage of mitochondrial reads, with a slight stromal signature (eg., expression of *RGS5*, *COL1A1*, *DCN*...). These cells are labeled as *"Stromal"* because cluster 0 contains most of the pericytes and smooth muscle cells. The low-quality cells are removed during stromal re-processing in `5_subclustering` (first-pass cluster listed under `stromal.remove` in `config/annotation.yaml`).
 
 # Assign compartment
 

@@ -1,0 +1,173 @@
+---
+title: "Compartment annotation"
+author: "Martín Suárez Álvarez"
+date: today
+format:
+    html:
+        embed-resources: true
+        code-fold: true
+        theme: minty
+        toc: true
+jupyter: kkik_parse
+---
+
+# Pre
+
+::: {.callout-note}
+The `uv` python interpreter lives in `~/minstallation/.venvs/KKIK_parse/bin/python`
+
+Render one report per compartment from the project root (requires `papermill` for `-P`):
+
+```bash
+for c in Stromal; do
+    quarto render 6_annotation/6_annotation.qmd -P compartment:$c &&
+        mv 6_annotation/6_annotation.html 6_annotation/6_annotation_$c.html
+done
+```
+:::
+
+Parameters:
+
+```{python}
+#| tags: [parameters]
+compartment = "Stromal"
+```
+
+```{python}
+import scanpy as sc
+import pandas as pd
+import os
+import matplotlib.pyplot as plt
+import plotnine as gg
+import yaml
+import session_info
+```
+
+Figure settings:
+
+```{python}
+plt.rcParams["font.sans-serif"] = "Nimbus sans"
+```
+
+Random settings / parameters:
+
+```{python}
+step = "6_annotation"
+random_state = 275
+with open("config/annotation.yaml") as fh:
+    annotation = yaml.safe_load(fh)[compartment.lower()]
+res = annotation["resolution"]
+```
+
+Create folders for outputs:
+
+```{python}
+resdir = f"{step}/outputs/{compartment}/files"
+os.makedirs(resdir, exist_ok=True)
+```
+
+Read the `{python} compartment` object from the subclustering step:
+
+```{python}
+adata = sc.read_h5ad(f"5_subclustering/outputs/{compartment}/files/sc.h5ad")
+```
+
+# Assign cell types
+
+Clusters at resolution `{python} res` are mapped to `cell_type_3` (refined) with the dictionary in `config/annotation.yaml`. `cell_type_2` groups `cell_type_3` into general cell types (e.g. all blood endothelium as `Endothelial_cells`); if no grouping is defined, both levels are the same.
+
+```{python}
+adata.obs["cell_type_3"] = adata.obs[f"leiden_{res}"].astype(str).map(annotation["clusters"])
+adata.obs["cell_type_2"] = adata.obs["cell_type_3"].map(
+    lambda ct: annotation.get("cell_type_2", {}).get(ct, ct)
+)
+```
+
+Unassigned clusters (should be empty): `{python} adata.obs.loc[adata.obs["cell_type_3"].isna(), f"leiden_{res}"].unique().tolist()`
+
+Cluster to cell type equivalence:
+
+```{python}
+(
+    adata.obs.groupby([f"leiden_{res}", "cell_type_3", "cell_type_2"], observed=True)
+    .size()
+    .rename("n")
+    .reset_index()
+    .sort_values(f"leiden_{res}", key=lambda c: c.astype(int))
+    .reset_index(drop=True)
+)
+```
+
+```{python}
+sc.pl.embedding(adata, basis="umap_harmony", color=f"leiden_{res}", legend_loc="on data")
+sc.pl.embedding(adata, basis="umap_harmony", color=["cell_type_2", "cell_type_3"])
+```
+
+# Remove contamination and doublets
+
+Cell types removed: `{python} annotation.get("exclude", [])`
+
+```{python}
+excluded = adata.obs["cell_type_3"].isin(annotation.get("exclude", []))
+adata.obs.loc[excluded, "cell_type_3"].value_counts()
+```
+
+```{python}
+adata = adata[~excluded].copy()
+for col in ["cell_type_2", "cell_type_3"]:
+    adata.obs[col] = adata.obs[col].astype("category")
+```
+
+Cells after removal: `{python} adata.n_obs`
+
+```{python}
+sc.pl.embedding(adata, basis="umap_harmony", color=["cell_type_2", "cell_type_3"])
+```
+
+# Markers per cell type
+
+```{python}
+#| output: asis
+print("::: {.panel-tabset}\n")
+for level in ["cell_type_2", "cell_type_3"]:
+    print(f"\n## {level}\n")
+    sc.tl.rank_genes_groups(
+        adata,
+        groupby=level,
+        method="wilcoxon",
+        use_raw=False,
+        key_added=f"markers_{level}",
+    )
+    sc.pl.rank_genes_groups_dotplot(adata, key=f"markers_{level}", n_genes=5)
+print("\n:::\n")
+```
+
+# Composition
+
+```{python}
+#| output: asis
+print("::: {.panel-tabset}\n")
+for level in ["cell_type_2", "cell_type_3"]:
+    print(f"\n## {level}\n")
+    (
+        gg.ggplot(adata.obs, gg.aes(x="sample", fill=level))
+        + gg.geom_bar(position="fill")
+        + gg.facet_grid(". ~ condition", scales="free_x", space="free_x")
+        + gg.theme_bw()
+        + gg.theme(axis_text_x=gg.element_text(rotation=90))
+        + gg.labs(y="proportion")
+    ).show()
+print("\n:::\n")
+```
+
+# Save
+
+```{python}
+sc.write(adata=adata, filename=f"{resdir}/sc.h5ad", ext="h5ad")
+```
+
+# Session info
+
+```{python}
+session_info.show(std_lib=True, dependencies=True)
+```

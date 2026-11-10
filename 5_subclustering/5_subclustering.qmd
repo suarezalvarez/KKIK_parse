@@ -40,6 +40,7 @@ import os
 import matplotlib.pyplot as plt
 import harmonypy as hm
 import plotnine as gg
+import yaml
 import session_info
 ```
 
@@ -65,6 +66,9 @@ qc_metrics = [
     "pct_counts_ribo",
 ]
 lineage_markers = ["EPCAM", "KRT8", "PTPRC", "CD3E", "CD79A", "COL1A1", "PDGFRA", "PECAM1"]
+with open("config/annotation.yaml") as fh:
+    annotation = yaml.safe_load(fh)
+removal = (annotation.get(compartment.lower()) or {}).get("remove")
 ```
 
 Create folders for outputs:
@@ -145,12 +149,27 @@ Sanity check: the max of counts should be an integer, and logcounts is probably 
 
 Selection using `seurat` method with `sample` as batch, recomputed within the compartment.
 
+In the immune compartment, variable immunoglobulin and TCR segments (V, D, J genes) are excluded from the HVGs so that clonality does not drive the clustering of B, plasma and T cells. Constant genes (e.g. *IGHA1*, *IGHG1*, *IGKC*, *TRAC*) are kept, as they reflect isotype.
+
 ```{python}
-sc.pp.highly_variable_genes(adata, layer="lognorm", batch_key="sample")
+vdj_pattern = r"^(IG[HKL]V|TR[ABDG]V|IG[HKL][DJ]\d|TR[ABDG][DJ]\d)"
+
+
+def select_hvgs(adata):
+    """Select HVGs; in the immune compartment, drop V(D)J genes. Returns the number dropped."""
+    sc.pp.highly_variable_genes(adata, layer="lognorm", batch_key="sample")
+    if compartment != "Immune":
+        return 0
+    vdj = adata.var_names.str.match(vdj_pattern) & adata.var["highly_variable"]
+    adata.var.loc[vdj, "highly_variable"] = False
+    return int(vdj.sum())
+
+
+n_vdj_removed = select_hvgs(adata)
 sc.pl.highly_variable_genes(adata, show=True)
 ```
 
-Number of HVGs: `{python} int(adata.var["highly_variable"].sum())`
+Number of HVGs: `{python} int(adata.var["highly_variable"].sum())` (V(D)J genes removed: `{python} n_vdj_removed`)
 
 # Dimensional reduction
 
@@ -276,6 +295,23 @@ for res in resolutions:
 print("\n:::\n")
 ```
 
+
+## Number of cells per cluster
+
+```{python}
+#| output: asis
+print("::: {.panel-tabset}\n")
+for res in resolutions:
+    print(f"\n### {res}\n")
+    counts = adata.obs[f"leiden_{res}"].value_counts().reset_index()
+    (
+        gg.ggplot(counts, gg.aes(x=f"leiden_{res}", y="count"))
+        + gg.geom_col()
+        + gg.theme_bw()
+    ).show()
+print("\n:::\n")
+```
+
 ## Quality metrics per cluster
 
 ```{python}
@@ -294,10 +330,119 @@ for res in resolutions:
 print("\n:::\n")
 ```
 
+# Re-processing after removing low-quality clusters
+
+Only applied when `config/annotation.yaml` defines `remove` for this compartment (currently `Stromal`): the listed first-pass clusters are removed and the compartment is processed again, so that HVGs, PCA and Harmony are not driven by low-quality cells.
+
+```{python}
+if removal:
+    remove_key = f"leiden_{removal['resolution']}"
+    to_remove = adata.obs[remove_key].isin([str(c) for c in removal["clusters"]])
+    display(
+        adata.obs.groupby(to_remove.map({True: "removed", False: "kept"}))[
+            ["total_counts", "n_genes_by_counts", "pct_counts_mt"]
+        ]
+        .median()
+        .assign(n=to_remove.map({True: "removed", False: "kept"}).value_counts())
+    )
+```
+
+```{python}
+def process(adata):
+    adata.X = adata.layers["counts"].copy()
+    sc.pp.normalize_total(adata, target_sum=None)
+    adata.uns.pop("log1p", None)
+    sc.pp.log1p(adata)
+    adata.layers["lognorm"] = adata.X.copy()
+    select_hvgs(adata)
+    sc.pp.pca(adata, mask_var="highly_variable", random_state=random_state)
+    harmony_out = hm.run_harmony(
+        adata.obsm["X_pca"][:, :n_pcs], adata.obs, "sample", random_state=random_state
+    )
+    adata.obsm["X_pca_harmony"] = harmony_out.Z_corr
+    sc.pp.neighbors(
+        adata, use_rep="X_pca_harmony", random_state=random_state, key_added="nn_harmony"
+    )
+    sc.tl.umap(
+        adata,
+        random_state=random_state,
+        neighbors_key="nn_harmony",
+        key_added="umap_harmony",
+        min_dist=min_dist,
+        spread=spread,
+    )
+    for res in resolutions:
+        sc.tl.leiden(
+            adata,
+            flavor="igraph",
+            n_iterations=2,
+            neighbors_key="nn_harmony",
+            resolution=res,
+            key_added=f"leiden_{res}",
+            random_state=random_state,
+        )
+        sc.tl.rank_genes_groups(
+            adata,
+            groupby=f"leiden_{res}",
+            method="wilcoxon",
+            use_raw=False,
+            key_added=f"markers_{res}",
+        )
+    return adata
+
+
+if removal:
+    adata = adata[~to_remove].copy()
+    adata.obs = adata.obs.drop(columns=[f"leiden_{res}" for res in resolutions])
+    adata.obs = adata.obs.apply(lambda c: c.cat.remove_unused_categories() if c.dtype == "category" else c)
+    for key in list(adata.uns):
+        if key not in ["sample_colors", "qc_status_colors", "condition_colors"]:
+            del adata.uns[key]
+    adata.obsm.clear()
+    adata.obsp.clear()
+    adata.varm.clear()
+    adata = process(adata)
+```
+
+Cells after removal: `{python} adata.n_obs`
+
+```{python}
+if removal:
+    sc.pl.embedding(adata, basis="umap_harmony", color=["sample", "condition", "leiden_global"])
+    sc.pl.embedding(adata, basis="umap_harmony", color=qc_metrics, cmap="magma")
+    sc.pl.embedding(
+        adata,
+        basis="umap_harmony",
+        color=[g for g in lineage_markers if g in adata.var_names],
+        cmap="magma",
+        ncols=4,
+    )
+```
+
+```{python}
+#| output: asis
+if removal:
+    print("::: {.panel-tabset}\n")
+    for res in resolutions:
+        print(f"\n### {res}\n")
+        sc.pl.embedding(adata, basis="umap_harmony", color=f"leiden_{res}", legend_loc="on data")
+        sc.pl.rank_genes_groups_dotplot(adata, key=f"markers_{res}", n_genes=5)
+        sc.pl.violin(
+            adata,
+            ["log1p_total_counts", "log1p_n_genes_by_counts", "pct_counts_mt"],
+            groupby=f"leiden_{res}",
+            rotation=90,
+            size=0,
+            dodge=False,
+        )
+    print("\n:::\n")
+```
+
 # Save
 
 ```{python}
 sc.write(adata=adata, filename=f"{resdir}/sc.h5ad", ext="h5ad")
+
 ```
 
 # Session info
